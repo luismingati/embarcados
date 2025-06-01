@@ -53,6 +53,20 @@ func (q *Queries) CreateVolume(ctx context.Context, arg CreateVolumeParams) (Vol
 	return i, err
 }
 
+const getTotalVolumeByPeriod = `-- name: GetTotalVolumeByPeriod :one
+SELECT
+  SUM(value)::float AS total_value
+FROM volumes
+WHERE created_at >= date_trunc($1, NOW() AT TIME ZONE 'America/Recife')
+`
+
+func (q *Queries) GetTotalVolumeByPeriod(ctx context.Context, dateTrunc string) (float64, error) {
+	row := q.db.QueryRow(ctx, getTotalVolumeByPeriod, dateTrunc)
+	var total_value float64
+	err := row.Scan(&total_value)
+	return total_value, err
+}
+
 const getVolumes = `-- name: GetVolumes :many
 SELECT id, value, created_at FROM volumes
 ORDER BY created_at
@@ -81,11 +95,12 @@ func (q *Queries) GetVolumes(ctx context.Context, limit int32) ([]Volume, error)
 
 const getVolumesByPeriod = `-- name: GetVolumesByPeriod :many
 SELECT
-  date_trunc($1, created_at)::TIMESTAMP      AS period,
-  SUM(value)::float                      AS total_value
+  date_trunc($1, created_at)::TIMESTAMP AS period,
+  SUM(value)::float AS total_value
 FROM volumes
+WHERE created_at <= NOW() AT TIME ZONE 'America/Recife'
 GROUP BY period
-ORDER BY period
+ORDER BY period DESC
 LIMIT $2
 `
 

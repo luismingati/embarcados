@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
+	"embarcados/internal/database"
+	"embarcados/internal/handler"
 	"log"
 	"net/http"
 	"os"
 	"time"
-
-	"embarcados/internal/database"
-	"embarcados/internal/handler"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -16,7 +15,6 @@ import (
 )
 
 func main() {
-	// Configuração do pool de conexões
 	pgxConfig, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("Erro ao analisar a configuração do banco de dados: %v\n", err)
@@ -45,13 +43,14 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Rotas para criar registros (POST)
 	r.Post("/volume", h.VolumeHandler)
 	r.Post("/vazao", h.FlowRateHandler)
 
-	// Rotas para leitura (GET)
 	r.Get("/volume-periodo", h.VolumeByPeriodHandler)
-	r.Get("/volumes", h.GetVolumes)
+	r.Get("/volume-total", h.GetTotalVolume)
+	r.Get("/volumes", h.GetTotalVolume)
+
+	r.Post("/populate-volumes", h.PopulateVolumes)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -142,6 +143,12 @@ type moneyRes struct {
 	TotalValue string    `json:"total_value"`
 }
 
+type totalRes struct {
+	Period           time.Time `json:"period"`
+	TotalValueFloat  float64   `json:"total_value_float"`
+	TotalValueString string    `json:"total_value_money"`
+}
+
 func formatMoneyOutput(res []database.GetVolumesByPeriodRow) []moneyRes {
 	out := make([]moneyRes, len(res))
 
@@ -152,26 +159,61 @@ func formatMoneyOutput(res []database.GetVolumesByPeriodRow) []moneyRes {
 			TotalValue: valorFormatado,
 		}
 	}
-
 	return out
 }
 
-func (h *Handler) GetVolumes(w http.ResponseWriter, r *http.Request) {
-	vol, err := h.db.GetVolumes(context.Background(), 100)
+func (h *Handler) GetTotalVolume(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		log.Printf("Período não informado\n")
+		http.Error(w, "Período obrigatório", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := getLimitByPeriod(period); err != nil {
+		log.Printf("Período inválido: %s\n", period)
+		http.Error(w, "Período inválido", http.StatusBadRequest)
+		return
+	}
+
+	row, err := h.db.GetTotalVolumeByPeriod(context.Background(), period)
 	if err != nil {
-		log.Printf("Erro ao buscar volumes no banco: %v\n", err)
-		http.Error(w, "Erro ao buscar volumes", http.StatusInternalServerError)
+		log.Printf("Erro ao buscar total de volumes: %v\n", err)
+		http.Error(w, "Erro ao buscar total de volumes", http.StatusInternalServerError)
 		return
 	}
-	if len(vol) == 0 {
-		log.Printf("Nenhum volume encontrado\n")
-		http.Error(w, "Nenhum volume encontrado", http.StatusNotFound)
-		return
+
+	now := time.Now()
+	var periodStart time.Time
+	switch period {
+	case "minute":
+		periodStart = now.Truncate(time.Minute)
+	case "hour":
+		periodStart = now.Truncate(time.Hour)
+	case "day":
+		periodStart = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case "week":
+		weekday := now.Weekday()
+		daysSinceMonday := (int(weekday) + 6) % 7
+		monday := now.AddDate(0, 0, -daysSinceMonday)
+		periodStart = time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, now.Location())
+	case "month":
+		periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	case "year":
+		periodStart = time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, now.Location())
+	default:
+		periodStart = now
 	}
-	log.Printf("Volumes encontrados: %d\n", len(vol))
+
+	var resp totalRes
+	resp.TotalValueString = fmt.Sprintf("R$ %.2f", row*2)
+	fmt.Println(row)
+	resp.Period = periodStart
+	resp.TotalValueFloat = row
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(vol)
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +259,7 @@ func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) 
 	if typ == "money" {
 		fmt.Println(typ)
 		for i := range res {
-			res[i].TotalValue *= 2
+			res[i].TotalValue *= 1
 		}
 		resp := formatMoneyOutput(res)
 		w.Header().Set("Content-Type", "application/json")
@@ -229,4 +271,51 @@ func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(res)
+}
+
+func (h *Handler) PopulateVolumes(w http.ResponseWriter, r *http.Request) {
+	loc, err := time.LoadLocation("America/Recife")
+	if err != nil {
+		loc = time.Now().Location()
+	}
+	hoje := time.Now().In(loc)
+	inicio := hoje.AddDate(-1, 0, 0)
+
+	rand.Seed(time.Now().UnixNano())
+
+	totalInseridos := 0
+	const secInDay = int64(24 * 60 * 60)
+
+	for dia := inicio; !dia.After(hoje); dia = dia.AddDate(0, 0, 1) {
+		for i := 0; i < 100; i++ {
+			offset := rand.Int63n(secInDay)
+
+			meiaNoite := time.Date(dia.Year(), dia.Month(), dia.Day(),
+				0, 0, 0, 0, loc)
+			ts := meiaNoite.Add(time.Duration(offset) * time.Second)
+
+			valor := rand.Float64() * 100.0
+
+			params := database.CreateVolumeParams{
+				Value: valor,
+				CreatedAt: pgtype.Timestamp{
+					Time:  ts,
+					Valid: true,
+				},
+			}
+
+			_, err := h.db.CreateVolume(context.Background(), params)
+			if err != nil {
+				log.Printf("Erro ao inserir volume em %s: %v\n", ts.Format(time.RFC3339), err)
+				continue
+			}
+			totalInseridos++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(struct {
+		Inseridos int `json:"inseridos"`
+	}{Inseridos: totalInseridos})
 }
