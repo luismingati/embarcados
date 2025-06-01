@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -117,6 +118,10 @@ type VolumePediodReq struct {
 
 func getLimitByPeriod(period string) (int32, error) {
 	switch period {
+	case "second":
+		return 3600, nil
+	case "minute":
+		return 60, nil
 	case "hour":
 		return 24, nil
 	case "day":
@@ -130,6 +135,25 @@ func getLimitByPeriod(period string) (int32, error) {
 	default:
 		return 0, fmt.Errorf("período inválido")
 	}
+}
+
+type moneyRes struct {
+	Period     time.Time `json:"period"`
+	TotalValue string    `json:"total_value"`
+}
+
+func formatMoneyOutput(res []database.GetVolumesByPeriodRow) []moneyRes {
+	out := make([]moneyRes, len(res))
+
+	for i, row := range res {
+		valorFormatado := fmt.Sprintf("R$ %.2f", row.TotalValue)
+		out[i] = moneyRes{
+			Period:     row.Period.Time,
+			TotalValue: valorFormatado,
+		}
+	}
+
+	return out
 }
 
 func (h *Handler) GetVolumes(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +176,18 @@ func (h *Handler) GetVolumes(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) {
 	period := r.URL.Query().Get("period")
+	typ := r.URL.Query().Get("type")
+	fmt.Println(typ)
+	if typ == "" {
+		typ = "liters"
+	} else {
+		if typ != "liters" && typ != "money" {
+			log.Printf("Tipo inválido: %s\n", typ)
+			http.Error(w, "Tipo inválido", http.StatusBadRequest)
+			return
 
+		}
+	}
 	limit, err := getLimitByPeriod(period)
 	if err != nil {
 		log.Printf("Erro ao obter limite: %v\n", err)
@@ -179,12 +214,18 @@ func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Nenhum volume encontrado", http.StatusNotFound)
 		return
 	}
-
-	fmt.Println(res[0].Period)
-	fmt.Println(res[0].Period.Months)
-	fmt.Println(res[0].Period.Days)
-
-	log.Printf("Volumes encontrados: %d\n", len(res))
+	if typ == "money" {
+		fmt.Println(typ)
+		for i := range res {
+			res[i].TotalValue *= 2
+		}
+		resp := formatMoneyOutput(res)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+	slog.Info("Volumes encontrados", "period", period, "count", len(res))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(res)

@@ -65,7 +65,7 @@ func (q *Queries) GetVolumes(ctx context.Context, limit int32) ([]Volume, error)
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Volume{}
+	var items []Volume
 	for rows.Next() {
 		var i Volume
 		if err := rows.Scan(&i.ID, &i.Value, &i.CreatedAt); err != nil {
@@ -81,8 +81,8 @@ func (q *Queries) GetVolumes(ctx context.Context, limit int32) ([]Volume, error)
 
 const getVolumesByPeriod = `-- name: GetVolumesByPeriod :many
 SELECT
-  date_trunc($1, created_at)      AS period,
-  SUM(value)                      AS total_value
+  date_trunc($1, created_at)::TIMESTAMP      AS period,
+  SUM(value)::float                      AS total_value
 FROM volumes
 GROUP BY period
 ORDER BY period
@@ -95,8 +95,8 @@ type GetVolumesByPeriodParams struct {
 }
 
 type GetVolumesByPeriodRow struct {
-	Period     pgtype.Interval `json:"period"`
-	TotalValue int64           `json:"total_value"`
+	Period     pgtype.Timestamp `json:"period"`
+	TotalValue float64          `json:"total_value"`
 }
 
 func (q *Queries) GetVolumesByPeriod(ctx context.Context, arg GetVolumesByPeriodParams) ([]GetVolumesByPeriodRow, error) {
@@ -105,7 +105,7 @@ func (q *Queries) GetVolumesByPeriod(ctx context.Context, arg GetVolumesByPeriod
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetVolumesByPeriodRow{}
+	var items []GetVolumesByPeriodRow
 	for rows.Next() {
 		var i GetVolumesByPeriodRow
 		if err := rows.Scan(&i.Period, &i.TotalValue); err != nil {

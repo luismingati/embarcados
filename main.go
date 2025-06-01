@@ -2,21 +2,24 @@ package main
 
 import (
 	"context"
-	"embarcados/internal/database"
-	"embarcados/internal/handler"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"embarcados/internal/database"
+	"embarcados/internal/handler"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
+	// Configuração do pool de conexões
 	pgxConfig, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("Erro ao analisar a configuração do banco de dados: %v\n", err)
-		panic(err)
 	}
 	pgxConfig.MaxConns = 100
 	pgxConfig.MinConns = 5
@@ -26,25 +29,29 @@ func main() {
 	pgxConfig.ConnConfig.ConnectTimeout = 5 * time.Second
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), pgxConfig)
-
 	if err != nil {
 		log.Fatalf("Erro ao conectar ao banco de dados: %v\n", err)
-		panic(err)
-	}
-	err = pool.Ping(context.Background())
-	if err != nil {
-		log.Fatalf("Erro ao se comunicar com o banco de dados: %v\n", err)
-		panic(err)
 	}
 	defer pool.Close()
 
-	db := database.New(pool)
-	handler := handler.NewHandler(db)
+	if err := pool.Ping(context.Background()); err != nil {
+		log.Fatalf("Erro ao se comunicar com o banco de dados: %v\n", err)
+	}
 
-	http.HandleFunc("POST /volume", handler.VolumeHandler)
-	http.HandleFunc("POST /vazao", handler.FlowRateHandler)
-	http.HandleFunc("GET /volume-periodo", handler.VolumeByPeriodHandler)
-	http.HandleFunc("GET /volume", handler.GetVolumes)
+	db := database.New(pool)
+	h := handler.NewHandler(db)
+
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// Rotas para criar registros (POST)
+	r.Post("/volume", h.VolumeHandler)
+	r.Post("/vazao", h.FlowRateHandler)
+
+	// Rotas para leitura (GET)
+	r.Get("/volume-periodo", h.VolumeByPeriodHandler)
+	r.Get("/volumes", h.GetVolumes)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -54,8 +61,7 @@ func main() {
 
 	addr := ":" + port
 	log.Printf("Servidor escutando na porta %s\n", port)
-
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Erro ao iniciar o servidor: %v", err)
 	}
 }
