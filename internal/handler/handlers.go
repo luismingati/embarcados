@@ -120,7 +120,7 @@ type VolumePediodReq struct {
 func getLimitByPeriod(period string) (int32, error) {
 	switch period {
 	case "second":
-		return 3600, nil
+		return 60, nil
 	case "minute":
 		return 60, nil
 	case "hour":
@@ -138,28 +138,10 @@ func getLimitByPeriod(period string) (int32, error) {
 	}
 }
 
-type moneyRes struct {
-	Period     time.Time `json:"period"`
-	TotalValue string    `json:"total_value"`
-}
-
 type totalRes struct {
-	Period           time.Time `json:"period"`
-	TotalValueFloat  float64   `json:"total_value_float"`
-	TotalValueString string    `json:"total_value_money"`
-}
-
-func formatMoneyOutput(res []database.GetVolumesByPeriodRow) []moneyRes {
-	out := make([]moneyRes, len(res))
-
-	for i, row := range res {
-		valorFormatado := fmt.Sprintf("R$ %.2f", row.TotalValue)
-		out[i] = moneyRes{
-			Period:     row.Period.Time,
-			TotalValue: valorFormatado,
-		}
-	}
-	return out
+	Period          time.Time `json:"period"`
+	TotalValueMls   float64   `json:"total_value_float"`
+	TotalValueMoney float64   `json:"total_value_money"`
 }
 
 func (h *Handler) GetTotalVolume(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +169,7 @@ func (h *Handler) GetTotalVolume(w http.ResponseWriter, r *http.Request) {
 	var periodStart time.Time
 	switch period {
 	case "minute":
-		periodStart = now.Truncate(time.Minute)
+		periodStart = now.Truncate(time.Minute * 5)
 	case "hour":
 		periodStart = now.Truncate(time.Hour)
 	case "day":
@@ -206,10 +188,10 @@ func (h *Handler) GetTotalVolume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var resp totalRes
-	resp.TotalValueString = fmt.Sprintf("R$ %.2f", row*2)
+	resp.TotalValueMoney = row * 2
 	fmt.Println(row)
 	resp.Period = periodStart
-	resp.TotalValueFloat = row
+	resp.TotalValueMls = row
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -227,7 +209,6 @@ func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) 
 			log.Printf("Tipo inválido: %s\n", typ)
 			http.Error(w, "Tipo inválido", http.StatusBadRequest)
 			return
-
 		}
 	}
 	limit, err := getLimitByPeriod(period)
@@ -259,12 +240,11 @@ func (h *Handler) VolumeByPeriodHandler(w http.ResponseWriter, r *http.Request) 
 	if typ == "money" {
 		fmt.Println(typ)
 		for i := range res {
-			res[i].TotalValue *= 1
+			res[i].TotalValue *= 2
 		}
-		resp := formatMoneyOutput(res)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(res)
 		return
 	}
 	slog.Info("Volumes encontrados", "period", period, "count", len(res))
